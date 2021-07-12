@@ -182,23 +182,36 @@ func (db *ArangoDB) createClient(raw map[string]interface{}) (driver.Client, err
 
 func (db *ArangoDB) grantPermissions(ctx context.Context, user driver.User, permissions []Permission) error {
 	for _, permission := range permissions {
-		database, err := db.client.Database(ctx, permission.Database)
-		if err != nil {
-			return err
-		}
+		var databases []driver.Database
 
-		if permission.Collection == "" || permission.Collection == "*" {
-			if err := user.SetDatabaseAccess(ctx, database, driver.Grant(permission.Grant)); err != nil {
-				return err
-			}
-		} else {
-			col, err := database.Collection(ctx, permission.Collection)
+		if permission.Database == "*" {
+			accessibleDatabases, err := db.client.AccessibleDatabases(ctx)
 			if err != nil {
 				return err
 			}
-
-			if err := user.SetCollectionAccess(ctx, col, driver.Grant(permission.Grant)); err != nil {
+			databases = accessibleDatabases
+		} else {
+			database, err := db.client.Database(ctx, permission.Database)
+			if err != nil {
 				return err
+			}
+			databases = []driver.Database{database}
+		}
+
+		for _, database := range databases {
+			if permission.Collection == "" || permission.Collection == "*" {
+				if err := user.SetDatabaseAccess(ctx, database, driver.Grant(permission.Grant)); err != nil {
+					return err
+				}
+			} else {
+				col, err := database.Collection(ctx, permission.Collection)
+				if err != nil {
+					return err
+				}
+
+				if err := user.SetCollectionAccess(ctx, col, driver.Grant(permission.Grant)); err != nil {
+					return err
+				}
 			}
 		}
 	}
