@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/arangodb/go-driver"
 	"github.com/arangodb/go-driver/http"
@@ -82,10 +83,13 @@ func (db *ArangoDB) NewUser(ctx context.Context, req dbplugin.NewUserRequest) (d
 	if err != nil {
 		return dbplugin.NewUserResponse{}, fmt.Errorf("failed to create new user: %w", err)
 	}
-	
+
 	for {
-		if _, err := db.client.User(ctx, username); err == nil || ctx.Err() != nil {
+		if _, err := db.client.User(ctx, username); err == nil {
 			break
+		}
+		if ctx.Err() != nil {
+			return dbplugin.NewUserResponse{}, ctx.Err()
 		}
 		time.Sleep(1 * time.Second)
 	}
@@ -194,7 +198,7 @@ func (db *ArangoDB) grantPermissions(ctx context.Context, user driver.User, perm
 		if len(permission.Database) > 0 && permission.Database != "*" {
 			pdb, err := db.client.Database(ctx, permission.Database)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to read database data: %w", err)
 			}
 			database = pdb
 		}
