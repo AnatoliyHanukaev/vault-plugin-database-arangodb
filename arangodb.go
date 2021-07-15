@@ -84,22 +84,10 @@ func (db *ArangoDB) NewUser(ctx context.Context, req dbplugin.NewUserRequest) (d
 		return dbplugin.NewUserResponse{}, fmt.Errorf("failed to create new user: %w", err)
 	}
 
-	var user driver.User
-	for {
-		user, err = db.client.User(ctx, username)
-		if err == nil {
-			break
-		}
-		if ctx.Err() != nil {
-			return dbplugin.NewUserResponse{}, ctx.Err()
-		}
-		time.Sleep(1 * time.Second)
-	}
-
-	if err := db.grantPermissions(ctx, user, permissions); err != nil {
+	if errp := db.grantPermissions(ctx, username, permissions); errp != nil {
 		// TODO: not really sure what to do in these cases, for now let's just try cleaning up
-		if err := user.Remove(ctx); err != nil {
-			return dbplugin.NewUserResponse{}, fmt.Errorf("error while removing failed user: %w", err)
+		if user, erru := db.client.User(ctx, username); erru == nil {
+			user.Remove(ctx)
 		}
 
 		return dbplugin.NewUserResponse{}, err
@@ -194,7 +182,7 @@ func (db *ArangoDB) createClient(raw map[string]interface{}) (driver.Client, err
 	return client, nil
 }
 
-func (db *ArangoDB) grantPermissions(ctx context.Context, user driver.User, permissions []Permission) error {
+func (db *ArangoDB) grantPermissions(ctx context.Context, username string, permissions []Permission) error {
 	for _, permission := range permissions {
 		var database driver.Database
 		if len(permission.Database) > 0 && permission.Database != "*" {
@@ -203,6 +191,18 @@ func (db *ArangoDB) grantPermissions(ctx context.Context, user driver.User, perm
 				return fmt.Errorf("failed to read database data: %w", err)
 			}
 			database = pdb
+		}
+
+		var user driver.User
+		for {
+			if pu, err := db.client.User(ctx, username); err == nil {
+				user = pu
+				break
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			time.Sleep(1 * time.Second)
 		}
 
 		if permission.Collection == "" || permission.Collection == "*" {
