@@ -4,12 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"strings"
+	"sync"
+
 	"github.com/arangodb/go-driver"
 	"github.com/arangodb/go-driver/http"
 	"github.com/hashicorp/vault/sdk/database/dbplugin/v5"
 	"github.com/hashicorp/vault/sdk/database/helper/credsutil"
-	"strings"
-	"sync"
 )
 
 var _ dbplugin.Database = (*ArangoDB)(nil)
@@ -40,7 +41,7 @@ func (db *ArangoDB) Initialize(ctx context.Context, req dbplugin.InitializeReque
 
 	if req.VerifyConnection {
 		if _, err := newClient.Users(ctx); err != nil {
-			return dbplugin.InitializeResponse{}, err
+			return dbplugin.InitializeResponse{}, fmt.Errorf("failed to verify connection: %w", err)
 		}
 	}
 
@@ -79,7 +80,7 @@ func (db *ArangoDB) NewUser(ctx context.Context, req dbplugin.NewUserRequest) (d
 		Password: req.Password,
 	})
 	if err != nil {
-		return dbplugin.NewUserResponse{}, err
+		return dbplugin.NewUserResponse{}, fmt.Errorf("failed to create new user: %w", err)
 	}
 
 	if err := db.grantPermissions(ctx, user, permissions); err != nil {
@@ -105,14 +106,14 @@ func (db *ArangoDB) UpdateUser(ctx context.Context, req dbplugin.UpdateUserReque
 
 	user, err := db.client.User(ctx, req.Username)
 	if err != nil {
-		return dbplugin.UpdateUserResponse{}, err
+		return dbplugin.UpdateUserResponse{}, fmt.Errorf("failed to read user data: %w", err)
 	}
 
 	if req.Password != nil {
 		if err := user.Update(ctx, driver.UserOptions{
 			Password: req.Password.NewPassword,
 		}); err != nil {
-			return dbplugin.UpdateUserResponse{}, err
+			return dbplugin.UpdateUserResponse{}, fmt.Errorf("failed to update password: %w", err)
 		}
 	}
 
@@ -132,12 +133,12 @@ func (db *ArangoDB) DeleteUser(ctx context.Context, req dbplugin.DeleteUserReque
 			return dbplugin.DeleteUserResponse{}, nil
 		}
 
-		return dbplugin.DeleteUserResponse{}, err
+		return dbplugin.DeleteUserResponse{}, fmt.Errorf("failed to read user data: %w", err)
 	}
 
 	err = user.Remove(ctx)
 	if err != nil && !driver.IsNotFound(err) {
-		return dbplugin.DeleteUserResponse{}, err
+		return dbplugin.DeleteUserResponse{}, fmt.Errorf("failed to remove user: %w", err)
 	}
 
 	return dbplugin.DeleteUserResponse{}, nil
@@ -151,7 +152,7 @@ func (db *ArangoDB) Close() error {
 func (db *ArangoDB) createClient(raw map[string]interface{}) (driver.Client, error) {
 	config, err := configFromRaw(raw)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse config data: %w", err)
 	}
 
 	var tlsConfig *tls.Config
@@ -166,7 +167,7 @@ func (db *ArangoDB) createClient(raw map[string]interface{}) (driver.Client, err
 		TLSConfig: tlsConfig,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create new connection: %w", err)
 	}
 
 	client, err := driver.NewClient(driver.ClientConfig{
@@ -174,7 +175,7 @@ func (db *ArangoDB) createClient(raw map[string]interface{}) (driver.Client, err
 		Authentication: driver.BasicAuthentication(config.Username, config.Password),
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create new client: %w", err)
 	}
 
 	return client, nil
@@ -183,26 +184,26 @@ func (db *ArangoDB) createClient(raw map[string]interface{}) (driver.Client, err
 func (db *ArangoDB) grantPermissions(ctx context.Context, user driver.User, permissions []Permission) error {
 	for _, permission := range permissions {
 		var database driver.Database
-		if len(permission.Database) > 0 {
-			db, err := db.client.Database(ctx, permission.Database)
+		if len(permission.Database) > 0 && permission.Database != "*" {
+			pdb, err := db.client.Database(ctx, permission.Database)
 			if err != nil {
 				return err
 			}
-			database = db
+			database = pdb
 		}
 
 		if permission.Collection == "" || permission.Collection == "*" {
 			if err := user.SetDatabaseAccess(ctx, database, driver.Grant(permission.Grant)); err != nil {
-				return err
+				return fmt.Errorf("failed to set database access for the user: %w", err)
 			}
 		} else {
 			col, err := database.Collection(ctx, permission.Collection)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to read collection data: %w", err)
 			}
 
 			if err := user.SetCollectionAccess(ctx, col, driver.Grant(permission.Grant)); err != nil {
-				return err
+				return fmt.Errorf("failed to set collection access for the user: %w", err)
 			}
 		}
 	}
