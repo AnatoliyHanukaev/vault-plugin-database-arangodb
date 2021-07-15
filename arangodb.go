@@ -82,6 +82,13 @@ func (db *ArangoDB) NewUser(ctx context.Context, req dbplugin.NewUserRequest) (d
 	if err != nil {
 		return dbplugin.NewUserResponse{}, fmt.Errorf("failed to create new user: %w", err)
 	}
+	
+	for {
+		if _, err := db.client.User(ctx, username); err == nil || ctx.Err() != nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
 
 	if err := db.grantPermissions(ctx, user, permissions); err != nil {
 		// TODO: not really sure what to do in these cases, for now let's just try cleaning up
