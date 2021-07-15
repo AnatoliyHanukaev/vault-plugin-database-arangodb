@@ -77,15 +77,17 @@ func (db *ArangoDB) NewUser(ctx context.Context, req dbplugin.NewUserRequest) (d
 		return dbplugin.NewUserResponse{}, fmt.Errorf("connection not initialized")
 	}
 
-	user, err := db.client.CreateUser(ctx, username, &driver.UserOptions{
+	_, err = db.client.CreateUser(ctx, username, &driver.UserOptions{
 		Password: req.Password,
 	})
 	if err != nil {
 		return dbplugin.NewUserResponse{}, fmt.Errorf("failed to create new user: %w", err)
 	}
 
+	var user driver.User
 	for {
-		if _, err := db.client.User(ctx, username); err == nil {
+		user, err = db.client.User(ctx, username)
+		if err == nil {
 			break
 		}
 		if ctx.Err() != nil {
