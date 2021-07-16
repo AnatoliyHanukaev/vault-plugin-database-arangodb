@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/arangodb/go-driver"
 	"github.com/arangodb/go-driver/http"
@@ -77,19 +76,16 @@ func (db *ArangoDB) NewUser(ctx context.Context, req dbplugin.NewUserRequest) (d
 		return dbplugin.NewUserResponse{}, fmt.Errorf("connection not initialized")
 	}
 
-	_, err = db.client.CreateUser(ctx, username, &driver.UserOptions{
+	user, err := db.client.CreateUser(ctx, username, &driver.UserOptions{
 		Password: req.Password,
 	})
 	if err != nil {
 		return dbplugin.NewUserResponse{}, fmt.Errorf("failed to create new user: %w", err)
 	}
 
-	if err := db.grantPermissions(ctx, username, permissions); err != nil {
+	if err := db.grantPermissions(ctx, user, permissions); err != nil {
 		// TODO: not really sure what to do in these cases, for now let's just try cleaning up
-		if user, erru := db.client.User(ctx, username); erru == nil {
-			user.Remove(ctx)
-		}
-
+		user.Remove(ctx)
 		return dbplugin.NewUserResponse{}, err
 	}
 
@@ -172,7 +168,7 @@ func (db *ArangoDB) createClient(raw map[string]interface{}) (driver.Client, err
 	}
 
 	client, err := driver.NewClient(driver.ClientConfig{
-		Connection:     conn,
+		Connection:     &CookieConnection{Connection: conn},
 		Authentication: driver.BasicAuthentication(config.Username, config.Password),
 	})
 	if err != nil {
@@ -182,7 +178,7 @@ func (db *ArangoDB) createClient(raw map[string]interface{}) (driver.Client, err
 	return client, nil
 }
 
-func (db *ArangoDB) grantPermissions(ctx context.Context, username string, permissions []Permission) error {
+func (db *ArangoDB) grantPermissions(ctx context.Context, user driver.User, permissions []Permission) error {
 	for _, permission := range permissions {
 		var database driver.Database
 		if len(permission.Database) > 0 && permission.Database != "*" {
@@ -191,18 +187,6 @@ func (db *ArangoDB) grantPermissions(ctx context.Context, username string, permi
 				return fmt.Errorf("failed to read database data: %w", err)
 			}
 			database = pdb
-		}
-
-		var user driver.User
-		for {
-			if pu, err := db.client.User(ctx, username); err == nil {
-				user = pu
-				break
-			}
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			time.Sleep(1 * time.Second)
 		}
 
 		if permission.Collection == "" || permission.Collection == "*" {
@@ -222,4 +206,37 @@ func (db *ArangoDB) grantPermissions(ctx context.Context, username string, permi
 	}
 
 	return nil
+}
+
+type CookieConnection struct {
+	driver.Connection
+	cookie string
+	mutex  sync.RWMutex
+}
+
+func (cc *CookieConnection) Do(ctx context.Context, req driver.Request) (driver.Response, error) {
+	cc.mutex.RLock()
+	if len(cc.cookie) > 0 {
+		req.SetHeader("Cookie", cc.cookie)
+	}
+	cc.mutex.RUnlock()
+	res, err := cc.Connection.Do(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	cookie := res.Header("Set-Cookie")
+	if len(cookie) > 0 {
+		cc.mutex.Lock()
+		cc.cookie = cookie
+		cc.mutex.Unlock()
+	}
+	return res, nil
+}
+
+func (cc *CookieConnection) SetAuthentication(auth driver.Authentication) (driver.Connection, error) {
+	conn, err := cc.Connection.SetAuthentication(auth)
+	if err != nil {
+		return nil, err
+	}
+	return &CookieConnection{Connection: conn}, nil
 }
