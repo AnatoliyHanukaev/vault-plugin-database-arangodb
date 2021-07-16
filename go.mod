@@ -1,6 +1,6 @@
-module github.com/eplightning/vault-plugin-database-arangodb
+module github.com/AnatoliyHanukaev/vault-plugin-database-arangodb
 
-go 1.15
+go 1.16
 
 require (
 	github.com/arangodb/go-driver v0.0.0-20200811070917-cc2b983cf602
