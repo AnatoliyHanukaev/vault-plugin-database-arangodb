@@ -1,4 +1,4 @@
-module github.com/AnatoliyHanukaev/vault-plugin-database-arangodb
+module github.com/eplightning/vault-plugin-database-arangodb
 
 go 1.16
 
