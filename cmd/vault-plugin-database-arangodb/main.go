@@ -4,7 +4,7 @@ import (
 	"log"
 	"os"
 
-	arangodb "github.com/AnatoliyHanukaev/vault-plugin-database-arangodb"
+	arangodb "github.com/eplightning/vault-plugin-database-arangodb"
 	"github.com/hashicorp/vault/sdk/database/dbplugin/v5"
 )
 
